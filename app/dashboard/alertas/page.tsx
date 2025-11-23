@@ -1,7 +1,9 @@
+//app/dashboard/alertas/page.tsx
 'use client';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
-import { AlertTriangle, CheckCircle, Filter } from 'lucide-react';
+import { auditarCierreAlerta } from '@/lib/audit';
+import { AlertTriangle, CheckCircle } from 'lucide-react';
 import Link from 'next/link';
 
 interface Alerta {
@@ -22,10 +24,15 @@ interface Alerta {
 export default function AlertasPage() {
   const [alertas, setAlertas] = useState<Alerta[]>([]);
   const [loading, setLoading] = useState(true);
+  const [resolviendo, setResolviendo] = useState<string | null>(null);
+
+  // 🆕 ESTADO PARA MODAL DE CONFIRMACIÓN
+  const [showModalResolver, setShowModalResolver] = useState(false);
+  const [alertaSeleccionada, setAlertaSeleccionada] = useState<string | null>(null);
+  const [notaCierre, setNotaCierre] = useState('');
 
   const fetchAlertas = async () => {
     setLoading(true);
-    // Traemos la alerta + datos del niño + datos del control
     const { data, error } = await supabase
       .from('tbl_alertas')
       .select(`
@@ -33,7 +40,7 @@ export default function AlertasPage() {
         tbl_ninos (id, nombres, apellidos),
         tbl_controles_nutricionales (hemoglobina)
       `)
-      .eq('estado', 'ACTIVA') // Solo queremos las pendientes
+      .eq('estado', 'ACTIVA')
       .order('fecha_generacion', { ascending: false });
 
     if (error) console.error(error);
@@ -41,18 +48,50 @@ export default function AlertasPage() {
     setLoading(false);
   };
 
-  const resolverAlerta = async (id: string) => {
-    const nota = prompt("Escriba una nota de resolución (Ej: Se entregó hierro):");
-    if (!nota) return;
+  // 🆕 ABRIR MODAL DE RESOLUCIÓN
+  const abrirModalResolver = (id: string) => {
+    setAlertaSeleccionada(id);
+    setNotaCierre('');
+    setShowModalResolver(true);
+  };
 
-    const { error } = await supabase
-      .from('tbl_alertas')
-      .update({ estado: 'CERRADA', nota_cierre: nota })
-      .eq('id', id);
+  // 🆕 RESOLVER ALERTA CON AUDITORÍA
+  const resolverAlerta = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!alertaSeleccionada || !notaCierre.trim()) {
+      alert('⚠️ Debe escribir una nota de resolución.');
+      return;
+    }
 
-    if (!error) {
-      alert("Alerta resuelta correctamente");
-      fetchAlertas(); // Recargar lista
+    setResolviendo(alertaSeleccionada);
+
+    try {
+      const { error } = await supabase
+        .from('tbl_alertas')
+        .update({ 
+          estado: 'CERRADA', 
+          nota_cierre: notaCierre.trim() 
+        })
+        .eq('id', alertaSeleccionada);
+
+      if (error) {
+        alert('❌ Error al resolver alerta: ' + error.message);
+      } else {
+        // 🆕 Auditar el cierre
+        await auditarCierreAlerta(alertaSeleccionada, notaCierre.trim());
+        
+        alert('✅ Alerta resuelta correctamente.');
+        setShowModalResolver(false);
+        setAlertaSeleccionada(null);
+        setNotaCierre('');
+        fetchAlertas();
+      }
+    } catch (err) {
+      console.error('Error inesperado:', err);
+      alert('❌ Error inesperado al resolver alerta.');
+    } finally {
+      setResolviendo(null);
     }
   };
 
@@ -82,7 +121,7 @@ export default function AlertasPage() {
             {loading ? (
               <tr><td colSpan={5} className="p-4 text-center">Buscando riesgos...</td></tr>
             ) : alertas.length === 0 ? (
-              <tr><td colSpan={5} className="p-8 text-center text-green-600">¡Todo excelente! No hay alertas activas.</td></tr>
+              <tr><td colSpan={5} className="p-8 text-center text-green-600 font-bold">¡Todo excelente! No hay alertas activas.</td></tr>
             ) : (
               alertas.map((alerta) => (
                 <tr key={alerta.id} className="hover:bg-red-50 transition text-black">
@@ -105,10 +144,17 @@ export default function AlertasPage() {
                   </td>
                   <td className="p-4">
                     <button 
-                      onClick={() => resolverAlerta(alerta.id)}
-                      className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 flex items-center gap-1"
+                      onClick={() => abrirModalResolver(alerta.id)}
+                      disabled={resolviendo === alerta.id}
+                      className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 flex items-center gap-1 disabled:bg-gray-400"
                     >
-                      <CheckCircle size={14} /> Resolver
+                      {resolviendo === alerta.id ? (
+                        <>Procesando...</>
+                      ) : (
+                        <>
+                          <CheckCircle size={14} /> Resolver
+                        </>
+                      )}
                     </button>
                   </td>
                 </tr>
@@ -117,6 +163,60 @@ export default function AlertasPage() {
           </tbody>
         </table>
       </div>
+
+      {/* 🆕 MODAL DE RESOLUCIÓN */}
+      {showModalResolver && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden">
+            <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
+              <h3 className="font-bold text-lg text-gray-800">Resolver Alerta</h3>
+              <button 
+                onClick={() => setShowModalResolver(false)} 
+                className="text-gray-500 hover:text-gray-700"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <form onSubmit={resolverAlerta} className="p-6 space-y-4">
+              <p className="text-sm text-gray-600">
+                Escriba una nota explicando cómo se resolvió esta alerta (ej: "Se entregó suplemento de hierro", "Control de seguimiento programado").
+              </p>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Nota de Resolución *
+                </label>
+                <textarea 
+                  required
+                  rows={3}
+                  className="w-full border rounded-lg p-2 text-black"
+                  placeholder="Escriba aquí las acciones tomadas..."
+                  value={notaCierre}
+                  onChange={e => setNotaCierre(e.target.value)}
+                ></textarea>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button 
+                  type="button"
+                  onClick={() => setShowModalResolver(false)}
+                  className="flex-1 px-4 py-2 border rounded-lg text-gray-600 hover:bg-gray-50"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit"
+                  disabled={!notaCierre.trim()}
+                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 flex items-center justify-center gap-2"
+                >
+                  <CheckCircle size={16} /> Confirmar Resolución
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

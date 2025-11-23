@@ -1,3 +1,4 @@
+//components/offlineStatus.tsx
 'use client';
 import { useEffect, useState } from 'react';
 import { Wifi, WifiOff, RefreshCw } from 'lucide-react';

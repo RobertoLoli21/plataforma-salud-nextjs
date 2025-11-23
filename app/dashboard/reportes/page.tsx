@@ -1,14 +1,17 @@
+//app/dashboard/reportes/page.tsx
 'use client';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
-import { Users, AlertTriangle, Package, TrendingUp } from 'lucide-react';
+import { Users, AlertTriangle, Package, TrendingUp, Download } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell 
 } from 'recharts';
+import * as XLSX from 'xlsx';
 
 export default function ReportesPage() {
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   
   // Estadísticas
   const [stats, setStats] = useState({
@@ -21,6 +24,9 @@ export default function ReportesPage() {
   // Datos para gráficos
   const [dataAnemia, setDataAnemia] = useState<any[]>([]);
   const [dataStock, setDataStock] = useState<any[]>([]);
+  
+  // Datos RAW para exportar
+  const [controlesParaExportar, setControlesParaExportar] = useState<any[]>([]);
 
   const calcularReportes = async () => {
     setLoading(true);
@@ -29,17 +35,22 @@ export default function ReportesPage() {
     const { count: ninosCount } = await supabase.from('tbl_ninos').select('*', { count: 'exact', head: true });
     
     // 2. Detectar Anemia (Último control de cada niño con Hb < 11)
-    // Nota: Para este demo haremos un conteo simple de controles con anemia reciente
     const { data: controles } = await supabase
       .from('tbl_controles_nutricionales')
-      .select('hemoglobina')
+      .select(`
+        *,
+        tbl_ninos (nombres, apellidos)
+      `)
       .order('fecha_control', { ascending: false })
-      .limit(100); // Analizamos los últimos 100 controles para la muestra
+      .limit(100);
 
     let conAnemia = 0;
     let sanos = 0;
 
     if (controles) {
+      // Guardamos para exportar después
+      setControlesParaExportar(controles);
+      
       controles.forEach(c => {
         if (c.hemoglobina < 11) conAnemia++;
         else sanos++;
@@ -56,7 +67,7 @@ export default function ReportesPage() {
     setStats({
       totalNinos: ninosCount || 0,
       casosAnemia: conAnemia,
-      totalCitas: 0, // Pendiente implementar conteo citas
+      totalCitas: 0,
       stockCritico: lowStock
     });
 
@@ -81,19 +92,101 @@ export default function ReportesPage() {
     calcularReportes();
   }, []);
 
-  // Colores para los gráficos
-  const COLORS = ['#EF4444', '#10B981']; // Rojo, Verde
+  // 🆕 FUNCIÓN DE EXPORTACIÓN A EXCEL
+  const exportarExcel = () => {
+    if (controlesParaExportar.length === 0) {
+      alert('⚠️ No hay datos para exportar.');
+      return;
+    }
+
+    setExporting(true);
+
+    try {
+      // 1. Preparar datos limpios para Excel
+      const datosLimpios = controlesParaExportar.map(c => ({
+        'Fecha Control': new Date(c.fecha_control).toLocaleDateString(),
+        'Nombre Niño': c.tbl_ninos?.nombres || 'N/A',
+        'Apellido': c.tbl_ninos?.apellidos || 'N/A',
+        'Peso (kg)': c.peso,
+        'Talla (cm)': c.talla,
+        'Hemoglobina': c.hemoglobina,
+        'Estado': c.hemoglobina < 11 ? 'ANEMIA' : 'NORMAL',
+        'Observaciones': c.observaciones || '-'
+      }));
+
+      // 2. Crear hoja de Excel
+      const ws = XLSX.utils.json_to_sheet(datosLimpios);
+      
+      // 3. Ajustar anchos de columna
+      const columnWidths = [
+        { wch: 15 }, // Fecha
+        { wch: 20 }, // Nombre
+        { wch: 20 }, // Apellido
+        { wch: 10 }, // Peso
+        { wch: 10 }, // Talla
+        { wch: 12 }, // Hemoglobina
+        { wch: 10 }, // Estado
+        { wch: 30 }  // Observaciones
+      ];
+      ws['!cols'] = columnWidths;
+
+      // 4. Crear libro y agregar hoja
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Controles Nutricionales');
+
+      // 5. Generar nombre con fecha
+      const fechaHoy = new Date().toISOString().split('T')[0];
+      const nombreArchivo = `Reporte_Anemia_${fechaHoy}.xlsx`;
+
+      // 6. Descargar
+      XLSX.writeFile(wb, nombreArchivo);
+
+      // Feedback visual
+      setTimeout(() => {
+        alert(`✅ Archivo "${nombreArchivo}" descargado exitosamente.`);
+        setExporting(false);
+      }, 500);
+
+    } catch (error) {
+      console.error('Error al exportar:', error);
+      alert('❌ Error al generar el archivo Excel.');
+      setExporting(false);
+    }
+  };
+
+  const COLORS = ['#EF4444', '#10B981'];
 
   if (loading) return <div className="p-8">Calculando estadísticas...</div>;
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-        <TrendingUp className="text-blue-600" />
-        Reportes Generales
-      </h1>
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+          <TrendingUp className="text-blue-600" />
+          Reportes Generales
+        </h1>
+        
+        {/* 🆕 BOTÓN DE EXPORTAR */}
+        <button
+          onClick={exportarExcel}
+          disabled={exporting || controlesParaExportar.length === 0}
+          className="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-green-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed shadow-md"
+        >
+          {exporting ? (
+            <>
+              <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+              Generando...
+            </>
+          ) : (
+            <>
+              <Download size={20} />
+              Exportar a Excel
+            </>
+          )}
+        </button>
+      </div>
 
-      {/* TARJETAS KPI (Indicadores Clave) */}
+      {/* TARJETAS KPI */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white p-4 rounded-lg shadow border-l-4 border-blue-500">
           <div className="flex justify-between items-center">
@@ -124,6 +217,17 @@ export default function ReportesPage() {
             <Package className="text-purple-200" size={32} />
           </div>
         </div>
+
+        {/* 🆕 KPI de Controles Disponibles */}
+        <div className="bg-white p-4 rounded-lg shadow border-l-4 border-green-500">
+          <div className="flex justify-between items-center">
+            <div>
+              <p className="text-gray-500 text-sm">Controles en Reporte</p>
+              <h2 className="text-3xl font-bold text-green-600">{controlesParaExportar.length}</h2>
+            </div>
+            <Download className="text-green-200" size={32} />
+          </div>
+        </div>
       </div>
 
       {/* GRÁFICOS */}
@@ -140,7 +244,7 @@ export default function ReportesPage() {
                   cx="50%"
                   cy="50%"
                   labelLine={false}
-                  label={({ name, percent }) =>`${name}: ${((percent ?? 0) * 100).toFixed(0)}%`}
+                  label={({ name, percent }) => `${name}: ${((percent ?? 0) * 100).toFixed(0)}%`}
                   outerRadius={80}
                   fill="#8884d8"
                   dataKey="value"

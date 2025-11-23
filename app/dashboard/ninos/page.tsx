@@ -1,10 +1,11 @@
+//app/dashboard/ninos/page.tsx
 'use client';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
+import { auditarCreacion } from '@/lib/audit';
 import { Plus, Search, X, Save } from 'lucide-react';
 import Link from 'next/link';
 
-// Definimos los tipos de datos
 interface Nino {
   id: string;
   nombres: string;
@@ -20,16 +21,14 @@ export default function NinosPage() {
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Estado para el formulario
   const [formData, setFormData] = useState({
     nombres: '',
     apellidos: '',
     fecha_nacimiento: '',
-    sexo: 'M', // Valor por defecto
+    sexo: 'M',
     dni: ''
   });
 
-  // Función para cargar niños de la BD
   const fetchNinos = async () => {
     setLoading(true);
     const { data, error } = await supabase
@@ -45,34 +44,55 @@ export default function NinosPage() {
     fetchNinos();
   }, []);
 
-  // Función para guardar el nuevo niño
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
 
-    // 1. Insertar en Supabase
-    const { error } = await supabase
-      .from('tbl_ninos')
-      .insert([
-        {
-          nombres: formData.nombres,
-          apellidos: formData.apellidos,
-          fecha_nacimiento: formData.fecha_nacimiento,
-          sexo: formData.sexo,
-          // Nota: dni no está en la tabla SQL original, asegúrate de haberlo creado o quita esta línea si falla.
-          // Si usaste mi script SQL anterior, la tabla no tiene DNI. Lo omitiremos por ahora para evitar errores.
-        }
-      ]);
-
-    if (error) {
-      alert('Error al guardar: ' + error.message);
-    } else {
-      // 2. Si todo sale bien: cerrar modal, limpiar form y recargar lista
-      setShowModal(false);
-      setFormData({ nombres: '', apellidos: '', fecha_nacimiento: '', sexo: 'M', dni: '' });
-      fetchNinos(); 
+    // Validar campos
+    if (!formData.nombres.trim() || !formData.apellidos.trim()) {
+      alert('⚠️ Nombre y apellidos son obligatorios.');
+      setSaving(false);
+      return;
     }
-    setSaving(false);
+
+    try {
+      // 1. Insertar en Supabase
+      const { data, error } = await supabase
+        .from('tbl_ninos')
+        .insert([
+          {
+            nombres: formData.nombres.trim(),
+            apellidos: formData.apellidos.trim(),
+            fecha_nacimiento: formData.fecha_nacimiento,
+            sexo: formData.sexo,
+          }
+        ])
+        .select()
+        .single();
+
+      if (error) {
+        alert('❌ Error al guardar: ' + error.message);
+      } else if (data) {
+        // 2. 🆕 Auditar la creación
+        await auditarCreacion('tbl_ninos', data.id, {
+          nombres: data.nombres,
+          apellidos: data.apellidos,
+          fecha_nacimiento: data.fecha_nacimiento,
+          sexo: data.sexo
+        });
+
+        // 3. Feedback y reseteo
+        alert(`✅ Niño "${data.nombres} ${data.apellidos}" registrado correctamente.`);
+        setShowModal(false);
+        setFormData({ nombres: '', apellidos: '', fecha_nacimiento: '', sexo: 'M', dni: '' });
+        fetchNinos();
+      }
+    } catch (err) {
+      console.error('Error inesperado:', err);
+      alert('❌ Error inesperado al guardar.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -82,7 +102,7 @@ export default function NinosPage() {
         <h1 className="text-2xl font-bold text-gray-800">Padrón de Niños</h1>
         <button 
           onClick={() => setShowModal(true)}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition"
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition shadow-md"
         >
           <Plus size={20} />
           Nuevo Niño
@@ -129,14 +149,14 @@ export default function NinosPage() {
                       {nino.sexo}
                     </span>
                   </td>
-                    <td className="p-4">
-                        <Link 
-                            href={`/dashboard/ninos/${nino.id}`}
-                            className="text-blue-600 hover:text-blue-800 font-medium hover:underline"
-                        >
-                            Ver Ficha
-                        </Link>
-                    </td>
+                  <td className="p-4">
+                    <Link 
+                      href={`/dashboard/ninos/${nino.id}`}
+                      className="text-blue-600 hover:text-blue-800 font-medium hover:underline"
+                    >
+                      Ver Ficha
+                    </Link>
+                  </td>
                 </tr>
               ))
             )}
@@ -144,7 +164,7 @@ export default function NinosPage() {
         </table>
       </div>
 
-      {/* MODAL - VENTANA FLOTANTE */}
+      {/* MODAL */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden">
@@ -157,7 +177,7 @@ export default function NinosPage() {
             
             <form onSubmit={handleSave} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Nombres</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nombres *</label>
                 <input 
                   type="text" 
                   required
@@ -168,7 +188,7 @@ export default function NinosPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Apellidos</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Apellidos *</label>
                 <input 
                   type="text" 
                   required
@@ -180,7 +200,7 @@ export default function NinosPage() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Fecha Nacimiento</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Fecha Nacimiento *</label>
                   <input 
                     type="date" 
                     required
@@ -190,7 +210,7 @@ export default function NinosPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Sexo</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Sexo *</label>
                   <select 
                     className="w-full border rounded-lg p-2 text-black"
                     value={formData.sexo}
@@ -213,9 +233,18 @@ export default function NinosPage() {
                 <button 
                   type="submit"
                   disabled={saving}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex justify-center items-center gap-2"
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex justify-center items-center gap-2 disabled:bg-gray-400"
                 >
-                  {saving ? 'Guardando...' : <><Save size={18} /> Guardar</>}
+                  {saving ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                      Guardando...
+                    </>
+                  ) : (
+                    <>
+                      <Save size={18} /> Guardar
+                    </>
+                  )}
                 </button>
               </div>
             </form>

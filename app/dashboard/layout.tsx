@@ -1,9 +1,12 @@
+//app/dashboard/layout.tsx
 'use client';
 import { useState, useEffect } from 'react'; // Importamos useEffect
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import OfflineStatus from '@/components/OfflineStatus';
+import InstallPWA from '@/components/InstallPWA';
+
 import { 
   Users, 
   Calendar, 
@@ -14,14 +17,11 @@ import {
   Home,
   AlertTriangle,
   Package,
-  ShieldCheck // Importamos el escudo para la pantalla de carga
+  ShieldCheck, // Importamos el escudo para la pantalla de carga
+  BarChart3
 } from 'lucide-react'; 
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
     const [userRole, setUserRole] = useState<number | null>(null);
@@ -133,6 +133,14 @@ export default function DashboardLayout({
                 <ShieldCheck size={20} className="mr-3" />
                 Gestión Usuarios
               </Link>
+                 <Link href="/dashboard/metricas" className="flex items-center p-3 text-gray-700 hover:bg-blue-50 rounded-lg transition">
+                    <BarChart3 size={20} className="mr-3" />
+                    Métricas Offline
+                </Link>
+                <Link href="/dashboard/evaluacion-alertas" className="flex items-center p-3 text-gray-700 hover:bg-red-50 hover:text-red-700 rounded-lg transition">
+                    <BarChart3 size={20} className="mr-3" />
+                    Evaluación Alertas
+                </Link>
             </>
           )}
           {userRole === 3 && (
@@ -181,6 +189,7 @@ export default function DashboardLayout({
           {children}
         </main>
       </div>
+      <InstallPWA />
     </div>
   );
 }
